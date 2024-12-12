@@ -432,9 +432,18 @@ def plot_budget_uncertainty(
         linestyle="dashed",
         linewidth=1,
     )
+    # Add mean and median lines
+    plt.axvline(
+        np.mean(budget_gt_samples), color="green", linestyle="dashed", linewidth=1
+    )
+    plt.axvline(
+        np.median(budget_gt_samples), color="purple", linestyle="dashed", linewidth=1
+    )
+    # Add labels and title
     plt.title("Total Carbon Budget Before Reaching Threshold")
     plt.xlabel("Carbon Budget (Gt CO₂)")
     plt.ylabel("Frequency")
+    plt.legend(["95% CI", "Mean", "Median"])
     plt.grid(True)
 
     # Plot for Per Capita Carbon Budget
@@ -454,9 +463,24 @@ def plot_budget_uncertainty(
         linestyle="dashed",
         linewidth=1,
     )
+    # Add mean and median lines
+    plt.axvline(
+        np.mean(budget_per_capita_tons_samples),
+        color="green",
+        linestyle="dashed",
+        linewidth=1,
+    )
+    plt.axvline(
+        np.median(budget_per_capita_tons_samples),
+        color="purple",
+        linestyle="dashed",
+        linewidth=1,
+    )
+
     plt.title("Per Capita Carbon Budget Before Reaching Threshold")
     plt.xlabel("Carbon Budget (metric tons CO₂ per person)")
     plt.ylabel("Frequency")
+    plt.legend(["95% CI", "Mean", "Median"])
     plt.grid(True)
 
     plt.tight_layout()
