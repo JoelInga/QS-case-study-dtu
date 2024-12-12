@@ -2,7 +2,6 @@ import os
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 from noetz_stroeve import ArcticSeaIceLossModel
 
@@ -11,7 +10,7 @@ CO2_TO_METRIC_TON = 1e9  # 1 Gt = 1e9 metric tons
 INITIAL_SEA_ICE_AREA_MKM2 = 5.57  # Initial sea ice area in million km²
 CURRENT_EMISSIONS_GT = 37.15  # Current annual CO2 emissions in Gt CO2/year
 POPULATION = 8.1e9  # 8.1 billion inhabitants
-UNCERTAINTY_M2 = 0.3  # ±0.3 m² uncertainty
+UNCERTAINTY_M2 = 0.3  # ±0.3 m² uncertainty in loss_per_ton
 THRESHOLD_MKM2 = 1  # Threshold sea ice area in million km²
 NUM_SIMULATIONS = 10000  # Number of Monte Carlo iterations
 STARTING_YEAR = 2022  # Starting year for simulations
@@ -370,6 +369,102 @@ def plot_combined_scenarios(
     print(f"Combined all scenarios plot saved as '{plot_filename}'.")
 
 
+def calculate_budget_with_uncertainty(
+    num_simulations=10000,
+    loss_per_ton_mean=3,
+    loss_per_ton_std=0.3,
+    threshold_mkm2=1,
+    initial_sea_ice_mkm2=5.57,
+    population=8.1e9,
+):
+    """
+    Calculate the total and per capita carbon budget with uncertainty using Monte Carlo simulations.
+
+    Returns:
+        budget_gt_samples (numpy.ndarray): Array of total carbon budget samples in Gt CO2.
+        budget_per_capita_tons_samples (numpy.ndarray): Array of per capita budget samples in metric tons CO2 per person.
+    """
+    # Sample loss_per_ton from a normal distribution
+    loss_per_ton_samples = np.random.normal(
+        loc=loss_per_ton_mean, scale=loss_per_ton_std, size=num_simulations
+    )
+
+    # Calculate leftover budget for each sample
+    total_loss_allowed_km2 = (initial_sea_ice_mkm2 - threshold_mkm2) * 1e6
+    total_loss_allowed_m2 = total_loss_allowed_km2 * 1e6
+    leftover_budget_tons = total_loss_allowed_m2 / loss_per_ton_samples
+    leftover_budget_gt = leftover_budget_tons / CO2_TO_METRIC_TON  # Convert to Gt
+
+    # Calculate per capita budget for each sample
+    leftover_budget_tons = leftover_budget_gt * CO2_TO_METRIC_TON
+    budget_per_person_tons = leftover_budget_tons / population
+
+    return leftover_budget_gt, budget_per_person_tons
+
+
+def plot_budget_uncertainty(
+    budget_gt_samples,
+    budget_per_capita_tons_samples,
+    plot_filename="plots/carbon_budget_with_uncertainty.png",
+):
+    """
+    Plot the distribution of total and per capita carbon budgets.
+
+    Args:
+        budget_gt_samples (numpy.ndarray): Array of total carbon budget samples in Gt CO2.
+        budget_per_capita_tons_samples (numpy.ndarray): Array of per capita budget samples in metric tons CO2 per person.
+        plot_filename (str): Path to save the plot.
+    """
+    plt.figure(figsize=(14, 6))
+
+    # Plot for Total Carbon Budget
+    plt.subplot(1, 2, 1)
+    plt.hist(budget_gt_samples, bins=50, color="skyblue", edgecolor="black")
+    plt.axvline(
+        np.percentile(budget_gt_samples, 2.5),
+        color="red",
+        linestyle="dashed",
+        linewidth=1,
+    )
+    plt.axvline(
+        np.percentile(budget_gt_samples, 97.5),
+        color="red",
+        linestyle="dashed",
+        linewidth=1,
+    )
+    plt.title("Total Carbon Budget Before Reaching Threshold")
+    plt.xlabel("Carbon Budget (Gt CO₂)")
+    plt.ylabel("Frequency")
+    plt.grid(True)
+
+    # Plot for Per Capita Carbon Budget
+    plt.subplot(1, 2, 2)
+    plt.hist(
+        budget_per_capita_tons_samples, bins=50, color="lightgreen", edgecolor="black"
+    )
+    plt.axvline(
+        np.percentile(budget_per_capita_tons_samples, 2.5),
+        color="red",
+        linestyle="dashed",
+        linewidth=1,
+    )
+    plt.axvline(
+        np.percentile(budget_per_capita_tons_samples, 97.5),
+        color="red",
+        linestyle="dashed",
+        linewidth=1,
+    )
+    plt.title("Per Capita Carbon Budget Before Reaching Threshold")
+    plt.xlabel("Carbon Budget (metric tons CO₂ per person)")
+    plt.ylabel("Frequency")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(plot_filename)
+    plt.close()
+    print(f"Carbon budget uncertainty plot saved as '{plot_filename}'.")
+
+
 def main():
     # 1. Answer the two questions
     print("### Answering the Questions ###\n")
@@ -390,8 +485,55 @@ def main():
         f"2. Per Capita Carbon Budget: {budget_per_person_tons:.2f} metric tons CO₂ per person\n"
     )
 
-    # 2. Analyze different emission scenarios
-    print("### Analyzing Different Emission Scenarios ###\n")
+    # 2. Calculate Carbon Budget with Uncertainty
+    print("### Calculating Carbon Budget with Uncertainty ###\n")
+
+    # Perform Monte Carlo simulation for budget calculations
+    budget_gt_samples, budget_per_capita_tons_samples = (
+        calculate_budget_with_uncertainty(
+            num_simulations=NUM_SIMULATIONS,
+            loss_per_ton_mean=3,
+            loss_per_ton_std=UNCERTAINTY_M2,
+            threshold_mkm2=THRESHOLD_MKM2,
+            initial_sea_ice_mkm2=INITIAL_SEA_ICE_AREA_MKM2,
+            population=POPULATION,
+        )
+    )
+
+    # Calculate statistics
+    budget_gt_mean = np.mean(budget_gt_samples)
+    budget_gt_median = np.median(budget_gt_samples)
+    budget_gt_2_5 = np.percentile(budget_gt_samples, 2.5)
+    budget_gt_97_5 = np.percentile(budget_gt_samples, 97.5)
+
+    budget_per_capita_mean = np.mean(budget_per_capita_tons_samples)
+    budget_per_capita_median = np.median(budget_per_capita_tons_samples)
+    budget_per_capita_2_5 = np.percentile(budget_per_capita_tons_samples, 2.5)
+    budget_per_capita_97_5 = np.percentile(budget_per_capita_tons_samples, 97.5)
+
+    print("### Total Carbon Budget ###")
+    print(f"Mean: {budget_gt_mean:.2f} Gt CO₂")
+    print(f"Median: {budget_gt_median:.2f} Gt CO₂")
+    print(
+        f"95% Confidence Interval: [{budget_gt_2_5:.2f}, {budget_gt_97_5:.2f}] Gt CO₂\n"
+    )
+
+    print("### Per Capita Carbon Budget ###")
+    print(f"Mean: {budget_per_capita_mean:.4f} metric tons CO₂ per person")
+    print(f"Median: {budget_per_capita_median:.4f} metric tons CO₂ per person")
+    print(
+        f"95% Confidence Interval: [{budget_per_capita_2_5:.4f}, {budget_per_capita_97_5:.4f}] metric tons CO₂ per person\n"
+    )
+
+    # Plot the budget distributions
+    plot_budget_uncertainty(
+        budget_gt_samples=budget_gt_samples,
+        budget_per_capita_tons_samples=budget_per_capita_tons_samples,
+        plot_filename="plots/carbon_budget_with_uncertainty.png",
+    )
+
+    # 3. Analyze different emission scenarios
+    print("\n### Analyzing Different Emission Scenarios ###\n")
 
     # Define standard emission scenarios
     emission_scenarios = {
@@ -423,7 +565,7 @@ def main():
         plot_name="sea_ice_scenarios",
     )
 
-    # 3. Simulate decreased emissions scenarios with linear decrease
+    # 4. Simulate decreased emissions scenarios with linear decrease
     print("\n### Simulating Decreased Emissions Scenarios (Linear Decrease) ###\n")
 
     # Define decreased emissions scenarios with linear decreases
@@ -469,7 +611,7 @@ def main():
         plot_name="decreased_emissions_scenarios",
     )
 
-    # 4. Combined Plot of All Scenarios
+    # 5. Combined Plot of All Scenarios
     print("\n### Creating Combined Plot of All Scenarios ###\n")
 
     # Combine standard and decreased emission scenarios into one plot
