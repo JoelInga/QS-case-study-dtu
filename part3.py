@@ -12,7 +12,7 @@ CURRENT_EMISSIONS_GT = 37.15  # Current annual CO2 emissions in Gt CO2/year
 POPULATION = 8.1e9  # 8.1 billion inhabitants
 UNCERTAINTY_M2 = 0.3  # ±0.3 m² uncertainty in loss_per_ton
 THRESHOLD_MKM2 = 1  # Threshold sea ice area in million km²
-NUM_SIMULATIONS = 10000  # Number of Monte Carlo iterations
+NUM_SIMULATIONS = 10000  # Number of Monte Carlo simulations
 STARTING_YEAR = 2022  # Starting year for simulations
 
 # Ensure reproducibility
@@ -120,10 +120,12 @@ def monte_carlo_simulation(
     Returns:
         results (list of lists): Each sublist contains the sea ice area history for a simulation.
         thresholds_reached (list of bool): Whether each simulation reached the threshold.
+        stopping_years (list of int): The year each simulation stopped.
     """
     results = []
     thresholds_reached = []
-    for _ in tqdm(range(num_simulations), desc="Monte Carlo Simulations"):
+    stopping_years = []
+    for sim in tqdm(range(num_simulations), desc="Monte Carlo Simulations"):
         years, sea_ice, reached_threshold = simulate_scenario(
             emission_rate_gt=emission_rate_gt,
             slope_gt_per_year=slope_gt_per_year,
@@ -134,7 +136,8 @@ def monte_carlo_simulation(
         )
         results.append(sea_ice)
         thresholds_reached.append(reached_threshold)
-    return results, thresholds_reached
+        stopping_years.append(years[-1])  # Last simulated year
+    return results, thresholds_reached, stopping_years
 
 
 def plot_scenarios(
@@ -147,15 +150,23 @@ def plot_scenarios(
     plot_name="sea_ice_scenarios",
 ):
     """
-    Plot sea ice area over time for different emission scenarios.
-    For scenarios with uncertainty, plot mean and confidence bands.
+    Plot sea ice area over time and the number of running simulations for different emission scenarios.
     """
-    plt.figure(figsize=(12, 8))
-    max_year = STARTING_YEAR
+    # Create a figure with two subplots: top for sea ice area, bottom for running simulations
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(14, 12), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+    )
 
-    for name, (emission_rate, slope) in scenarios.items():
+    max_year = STARTING_YEAR
+    color_map = plt.get_cmap("tab10")  # Choose a color map
+    scenario_colors = {}  # To store colors for each scenario
+
+    for idx, (name, (emission_rate, slope)) in enumerate(scenarios.items()):
+        color = color_map(idx % 10)  # Assign a color from the color map
+        scenario_colors[name] = color  # Store the color for later use
+
         if include_uncertainty:
-            mc_results, thresholds_reached = monte_carlo_simulation(
+            mc_results, thresholds_reached, stopping_years = monte_carlo_simulation(
                 emission_rate_gt=emission_rate,
                 slope_gt_per_year=slope,
                 include_uncertainty=True,
@@ -177,31 +188,49 @@ def plot_scenarios(
             upper_bound = np.nanpercentile(sea_ice_matrix, 97.5, axis=0)
             years = np.arange(STARTING_YEAR, STARTING_YEAR + max_length)
 
-            plt.plot(years, mean_sea_ice, label=f"{name} Mean")
-            plt.fill_between(
-                years, lower_bound, upper_bound, alpha=0.2, label=f"{name} 95% CI"
+            # Plot mean and confidence interval on ax1
+            ax1.plot(years, mean_sea_ice, label=f"{name} Mean", color=color)
+            ax1.fill_between(
+                years,
+                lower_bound,
+                upper_bound,
+                alpha=0.2,
+                color=color,
+                label=f"{name} 95% CI",
+            )
+
+            # Annotate percentage of simulations reaching the threshold
+            pct_reached = sum(thresholds_reached) / num_simulations * 100
+            ax1.text(
+                years[-1],
+                mean_sea_ice[-1],
+                f"{name}: {pct_reached:.1f}% reached threshold",
+                fontsize=8,
+                verticalalignment="bottom",
+                color=color,
             )
 
             max_year = max(max_year, years[-1])
 
-            # Annotate if some simulations did not reach the threshold
-            if not all(thresholds_reached):
-                plt.text(
-                    years[-1],
-                    mean_sea_ice[-1],
-                    f"{name}: {sum(thresholds_reached)/num_simulations*100:.1f}% reached threshold",
-                    fontsize=8,
-                    verticalalignment="bottom",
-                )
-            elif all(thresholds_reached) and slope < 0:
-                print(f"{name}: All simulations reached threshold")
-                plt.text(
-                    years[-1],
-                    mean_sea_ice[-1],
-                    f"{name}: All simulations reached threshold",
-                    fontsize=8,
-                    verticalalignment="bottom",
-                )
+            # Process stopping years to count running simulations
+            stopping_years_sorted = np.sort(stopping_years)
+            running_counts = []
+            year_range = np.arange(STARTING_YEAR, years[-1] + 1)
+            for year in year_range:
+                # Number of simulations that stop after the current year
+                running = np.sum(stopping_years_sorted >= year)
+                running_counts.append(running)
+
+            # Plot running simulations on ax2
+            ax2.plot(
+                year_range,
+                running_counts,
+                label=f"{name} Running Simulations",
+                color=color,
+            )
+            # Increase ax2 y-axis limit by 20% for better visualization, make sure lower limit is 0
+            ax2.set_ylim(top=max(running_counts) * 1.4, bottom=0)
+
         else:
             # Run a single simulation without uncertainty
             years_history, sea_ice_history, reached_threshold = simulate_scenario(
@@ -213,27 +242,39 @@ def plot_scenarios(
                 threshold_mkm2=threshold_mkm2,
             )
 
-            plt.plot(years_history, sea_ice_history, label=name)
+            ax1.plot(years_history, sea_ice_history, label=name, color=color)
             max_year = max(max_year, years_history[-1])
 
             # Annotate if the threshold was not reached
             if not reached_threshold:
-                plt.text(
+                ax1.text(
                     years_history[-1],
                     sea_ice_history[-1],
                     f"{name}: Threshold not reached",
                     fontsize=8,
                     verticalalignment="bottom",
+                    color=color,
                 )
 
-    plt.axhline(
+    # Configure ax1 (Sea Ice Area)
+    ax1.axhline(
         y=threshold_mkm2, color="k", linestyle="--", label="Threshold Sea Ice Area"
     )
-    plt.xlabel("Year")
-    plt.ylabel("Arctic Sea Ice Area (million km²)")
-    plt.title("Arctic Sea Ice Area Over Time Under Different Emission Scenarios")
-    plt.legend()
-    plt.grid(True)
+    ax1.set_ylabel("Arctic Sea Ice Area (million km²)")
+    ax1.set_title("Arctic Sea Ice Area Over Time Under Different Emission Scenarios")
+    ax1.legend(loc="upper right")
+    ax1.grid(True)
+
+    # Configure ax2 (Running Simulations)
+    if include_uncertainty:
+        ax2.set_xlabel("Year")
+        ax2.set_ylabel("Number of Running Simulations")
+        ax2.set_title("Number of Running Simulations Over Time")
+        ax2.legend(loc="upper right")
+        ax2.grid(True)
+    else:
+        ax2.axis("off")
+
     plt.tight_layout()
 
     # Set x-axis limit
@@ -260,18 +301,29 @@ def plot_combined_scenarios(
 ):
     """
     Plot all emission scenarios (both standard and decreased) on a single plot with confidence bands if uncertainty is included.
+    Also plots the number of running simulations below.
     """
-    plt.figure(figsize=(14, 10))
+    # Create a figure with two subplots: top for sea ice area, bottom for running simulations
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(16, 14), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+    )
+
     # Combine standard and decreased scenarios into one dictionary
     all_scenarios = {
         **emission_scenarios,
         **{name: (rate, slope) for name, rate, slope in decreased_scenarios},
     }
     max_year = STARTING_YEAR
+    color_map = plt.get_cmap("tab10")  # Choose a color map
+    scenario_colors = {}  # To store colors for each scenario
 
-    for name, (emission_rate, slope) in all_scenarios.items():
+    for idx, (name, (emission_rate, slope)) in enumerate(all_scenarios.items()):
+        color = color_map(idx % 10)  # Assign a color from the color map
+        scenario_colors[name] = color  # Store the color for later use
+
         if include_uncertainty:
-            mc_results, thresholds_reached = monte_carlo_simulation(
+            mc_results, thresholds_reached, stopping_years = monte_carlo_simulation(
                 emission_rate_gt=emission_rate,
                 slope_gt_per_year=slope,
                 include_uncertainty=True,
@@ -293,35 +345,49 @@ def plot_combined_scenarios(
             upper_bound = np.nanpercentile(sea_ice_matrix, 97.5, axis=0)
             years = np.arange(STARTING_YEAR, STARTING_YEAR + max_length)
 
-            plt.plot(years, mean_sea_ice, label=f"{name} Mean")
-            plt.fill_between(
-                years, lower_bound, upper_bound, alpha=0.2, label=f"{name} 95% CI"
+            # Plot mean and confidence interval on ax1
+            ax1.plot(years, mean_sea_ice, label=f"{name} Mean", color=color)
+            ax1.fill_between(
+                years,
+                lower_bound,
+                upper_bound,
+                alpha=0.2,
+                color=color,
+                label=f"{name} 95% CI",
+            )
+
+            # Annotate percentage of simulations reaching the threshold
+            pct_reached = sum(thresholds_reached) / num_simulations * 100
+            ax1.text(
+                years[-1],
+                mean_sea_ice[-1],
+                f"{name}: {pct_reached:.1f}% reached threshold",
+                fontsize=8,
+                verticalalignment="bottom",
+                color=color,
             )
 
             max_year = max(max_year, years[-1])
 
-            # Annotate if some simulations did not reach the threshold
-            if not all(thresholds_reached):
-                print(
-                    f"{name}: {sum(thresholds_reached)/num_simulations*100:.1f}% reached threshold"
-                )
-                print(f"years, last sea ice: {years[-1]}, {mean_sea_ice[-1]}")
-                plt.text(
-                    years[-1],
-                    mean_sea_ice[-1],
-                    f"{name}: {sum(thresholds_reached)/num_simulations*100:.1f}% reached threshold",
-                    fontsize=8,
-                    verticalalignment="bottom",
-                )
-            elif all(thresholds_reached) and slope < 0:
-                print(f"{name}: All simulations reached threshold")
-                plt.text(
-                    years[-1],
-                    mean_sea_ice[-1],
-                    f"{name}: All simulations reached threshold",
-                    fontsize=8,
-                    verticalalignment="bottom",
-                )
+            # Process stopping years to count running simulations
+            stopping_years_sorted = np.sort(stopping_years)
+            running_counts = []
+            year_range = np.arange(STARTING_YEAR, years[-1] + 1)
+            for year in year_range:
+                # Number of simulations that stop after the current year
+                running = np.sum(stopping_years_sorted >= year)
+                running_counts.append(running)
+
+            # Plot running simulations on ax2
+            ax2.plot(
+                year_range,
+                running_counts,
+                label=f"{name} Running Simulations",
+                color=color,
+            )
+            # Increase ax2 y-axis limit by 200 for better visualization, make sure lower limit is 0
+            ax2.set_ylim(top=max(running_counts) * 1.4, bottom=0)
+
         else:
             # Run a single simulation without uncertainty
             years_history, sea_ice_history, reached_threshold = simulate_scenario(
@@ -333,27 +399,37 @@ def plot_combined_scenarios(
                 threshold_mkm2=threshold_mkm2,
             )
 
-            plt.plot(years_history, sea_ice_history, label=name)
+            ax1.plot(years_history, sea_ice_history, label=name, color=color)
             max_year = max(max_year, years_history[-1])
 
             # Annotate if the threshold was not reached
             if not reached_threshold:
-                plt.text(
+                ax1.text(
                     years_history[-1],
                     sea_ice_history[-1],
                     f"{name}: Threshold not reached",
                     fontsize=8,
                     verticalalignment="bottom",
+                    color=color,
                 )
 
-    plt.axhline(
+    # Configure ax1 (Sea Ice Area)
+    ax1.axhline(
         y=threshold_mkm2, color="k", linestyle="--", label="Threshold Sea Ice Area"
     )
-    plt.xlabel("Year")
-    plt.ylabel("Arctic Sea Ice Area (million km²)")
-    plt.title("Arctic Sea Ice Area Over Time Under All Emission Scenarios")
-    plt.legend()
-    plt.grid(True)
+    ax1.set_ylabel("Arctic Sea Ice Area (million km²)")
+    ax1.set_title("Arctic Sea Ice Area Over Time Under All Emission Scenarios")
+    ax1.legend(loc="upper right", fontsize="small")
+    ax1.grid(True)
+    # Configure ax2 (Running Simulations)
+    if include_uncertainty:
+        ax2.set_xlabel("Year")
+        ax2.set_ylabel("Number of Running Simulations")
+        ax2.set_title("Number of Running Simulations Over Time")
+        ax2.legend(loc="upper right")
+        ax2.grid(True)
+    else:
+        ax2.axis("off")
     plt.tight_layout()
 
     # Set x-axis limit
@@ -602,12 +678,12 @@ def main():
             -CURRENT_EMISSIONS_GT / decrease_period_years,  # Negative slope
         ),
         (
-            f"Linear Decrease to 0 in {decrease_period_years *1.2} years",
+            f"Linear Decrease to 0 in {int(decrease_period_years *1.2)} years",
             CURRENT_EMISSIONS_GT,
             -CURRENT_EMISSIONS_GT / (decrease_period_years * 1.2),
         ),
         (
-            f"Linear Decrease to 0 in {decrease_period_years * 1.4} years",
+            f"Linear Decrease to 0 in {int(decrease_period_years * 1.4)} years",
             CURRENT_EMISSIONS_GT,
             -CURRENT_EMISSIONS_GT / (decrease_period_years * 1.4),
         ),
